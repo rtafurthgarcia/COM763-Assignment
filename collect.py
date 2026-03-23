@@ -1,41 +1,82 @@
 import json
 import os
-from typing import Iterator, Optional, Self
-from pydantic import BaseModel, RootModel
 from ripe.atlas.cousteau import AnchorRequest
 import pycountry
 from scapy.all import sr1
 from scapy.layers.inet import IP, TCP, traceroute
 import time
-import datetime
-from itertools import chain 
 from multiprocessing import Pool
+from entites import Measure, Measures, ServerIdentity, Servers
+import requests
 
-def obtain_anchors() -> dict[str, list[AnchorRequest]]:
-    results: dict[str, list[AnchorRequest]] = {}
+def obtain_ripe_anchors():
+    for country in pycountry.countries:
+        print(f"Querying anchors for {country.name}.")
+        anchors = AnchorRequest(**{"country": country.alpha_2, "limit": 10})
+
+        for anchor in anchors:
+            if not anchor["is_disabled"]:
+                yield ServerIdentity(
+                    id=anchor["id"],
+                    country=country.alpha_2,
+                    origin="RIPE",
+                    ip_v4=anchor["ip_v4"],
+                    ip_v6=anchor["ip_v6"]
+                )
+
+def obtain_mullvad_vpns():
+    print(f"Querying mullvad servers.")
+    response = requests.get("https://api.mullvad.net/www/relays/all/")
+    servers_list = response.json()
+
+    for i, server in enumerate(servers_list):
+        if server["active"] is True:
+            yield ServerIdentity(
+                origin="Mullvad",
+                id=i,
+                country=server["country_code"],
+                ip_v4=server["ipv4_addr_in"],
+                ip_v6=server["ipv6_addr_in"]
+            )
+
+def obtain_nordvpn_vpns():
+    print(f"Querying NordVPN servers.")
+    response = requests.get("https://api.nordvpn.com/v1/servers?limit=0")
+    servers_list = response.json()
+
+    for server in servers_list:
+        if server["status"] == "online":
+            yield ServerIdentity(
+                origin="NordVPN",
+                id=server["id"],
+                country=server["locations"][0]["country"]["code"],
+                ip_v4=server["station"],
+                ip_v6=server["ipv6_station"]
+            )
+                
+
+def read_server_source() -> Servers:
+    results = Servers()
 
     print("Obtaining anchors...")
     # Read from file and parse JSON
-    if os.path.exists("anchors.json"):
-        with open("anchors.json", "r") as f:
+    if os.path.exists("sources.json"):
+        with open("sources.json", "r") as f:
             results = json.load(f)
     else:
-        for country in pycountry.countries:
-            print(f"Querying anchors for {country.name}.")
-            anchors = AnchorRequest(**{"country": country.alpha_2, "limit": 10})
+        for anchor in obtain_ripe_anchors():
+            results.add(anchor)
 
-            results[country.alpha_2] = list()
-            for anchor in anchors:
-                if not anchor["is_disabled"]:
-                    results[country.alpha_2].append(anchor)
+        for server in obtain_mullvad_vpns():
+            results.add(server)
 
-        json_str = json.dumps(results, indent=4)
-        with open("anchors.json", "w") as f:
-            f.write(json_str)
+        for server in obtain_nordvpn_vpns():
+            results.add(server)
 
-    total = 0
-    for country in results.values():
-        total += len(country)
+        with open("sources.json", "w") as f:
+            f.write(results.model_dump_json())
+
+    total = len(results)
     print(f"{total} anchors obtained!")
     return results
 
@@ -47,90 +88,50 @@ def get_latency_tcp(destination: str) -> float | None:
     else:
         return 0
 
-class Measure(BaseModel):
-    id: int
-    ground_truth: str 
-    guess: Optional[str] = None
-    ip_v4: Optional[str] = None
-    ip_v6: Optional[str] = None
-    latency: float
-    hops: float
-    count: int
-    date_time: datetime.datetime = datetime.datetime.now()
+def run_measurements(server_identity: ServerIdentity, max_measures = 2, max_anchors = 10):
+    destination = server_identity.ip_v4
+    if destination is None:
+        destination = server_identity.ip_v6
+    if destination is None:
+        return
 
-class Measures(RootModel):
-    root: list[Measure] = []
+    print(f"Taking measurements for {destination} in {server_identity.country}.")
+    latency = 0
+    hops = 0
 
-    def __iter__(self) -> Iterator[Measure]: # type: ignore
-        return iter(self.root)
+    measures_count = 0
+    failed_attempts = 0
+    while(not (measures_count > max_measures or failed_attempts > max_measures)):
+        single_latency = get_latency_tcp(destination)
+        result, _ = traceroute(target=destination, verbose=False, dport=53) # is not supposed to answer on 53
 
-    def __getitem__(self, item):
-        return self.root[item]
-    
-    def __add__(self, other: Self | list):
-        if isinstance(other, Measures):
-            return Measures(root=self.root + other.root)
-        elif isinstance(other, list):
-            return Measures(root=self.root + list(chain.from_iterable(other)))
-    
-    def append(self, measure: Measure):
-        self.root.append(measure)
+        if single_latency is not None:
+            latency += single_latency
+            hops += len(result)
+            measures_count += 1
+        else:
+            failed_attempts += 1
 
-def run_measurement_for_country(couple, max_measures = 2, max_anchors = 10):
-    anchors_count = 0
-    country, anchors = couple
-    results = []
-    print(f"Starting {max_anchors} measurements for {country}.")
-    for anchor in anchors:
-        destination = anchor["ip_v4"] # type: ignore
-        if destination is None:
-            destination = anchors["ip_v6"] # type: ignore
+    if (measures_count > 0):
+        measure = Measure(
+            id=server_identity.id,  # type: ignore
+            ground_truth=server_identity.country,
+            origin=server_identity.origin,
+            ip_v4=server_identity.ip_v4, # type: ignore
+            ip_v6=server_identity.ip_v6, # type: ignore
+            latency=round(latency / measures_count, 8), 
+            hops=round(hops / measures_count, 8),
+            count=measures_count
+        )
 
-        print(f"Taking measurements for {destination} in {country}.")
-        latency = 0
-        hops = 0
-
-        measures_count = 0
-        failed_attempts = 0
-        while(not (measures_count > max_measures or failed_attempts > max_measures)):
-            single_latency = get_latency_tcp(destination)
-            result, _ = traceroute(target=destination, verbose=False, dport=53) # is not supposed to answer on 53
-
-            if single_latency is not None:
-                latency += single_latency
-                hops += len(result)
-                measures_count += 1
-            else:
-                failed_attempts += 1
-
-        if (measures_count > 0):
-            anchors_count += 1
-
-            measure = Measure(
-                id=anchor["id"],  # type: ignore
-                ground_truth=country,
-                ip_v4=anchor["ip_v4"], # type: ignore
-                ip_v6=anchor["ip_v6"], # type: ignore
-                latency=round(latency / measures_count, 8), 
-                hops=round(hops / measures_count, 8),
-                count=measures_count
-            )
-
-            results.append(measure)
-        
-        if anchors_count > max_anchors:
-            break
-
-    print(f"End of measurements for {country}.")
-    return results
+        return measure
 
 if __name__ == '__main__':
-    anchors = obtain_anchors()
-
+    servers = read_server_source()
     measures = Measures()
 
     with Pool(4) as pool:
-        measures += pool.map(run_measurement_for_country, anchors.items())
+        measures += pool.map(run_measurements, servers.root)
 
     if measures is not None and len(measures.root) > 0:
         with open("measurements.json", "w") as f:
