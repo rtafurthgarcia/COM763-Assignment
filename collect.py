@@ -61,8 +61,8 @@ def read_server_source() -> Servers:
     print("Obtaining anchors...")
     # Read from file and parse JSON
     if os.path.exists("sources.json"):
-        with open("sources.json", "r") as f:
-            results = json.load(f)
+        with open("sources.json", "r") as file:
+            results = Servers.model_validate_json(file.read())
     else:
         for anchor in obtain_ripe_anchors():
             results.add(anchor)
@@ -73,8 +73,8 @@ def read_server_source() -> Servers:
         for server in obtain_nordvpn_vpns():
             results.add(server)
 
-        with open("sources.json", "w") as f:
-            f.write(results.model_dump_json())
+        with open("sources.json", "w") as file:
+            file.write(results.model_dump_json())
 
     total = len(results)
     print(f"{total} anchors obtained!")
@@ -114,11 +114,11 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 2, max_anch
 
     if (measures_count > 0):
         measure = Measure(
-            id=server_identity.id,  # type: ignore
+            id=server_identity.id, 
             ground_truth=server_identity.country,
             origin=server_identity.origin,
-            ip_v4=server_identity.ip_v4, # type: ignore
-            ip_v6=server_identity.ip_v6, # type: ignore
+            ip_v4=server_identity.ip_v4,
+            ip_v6=server_identity.ip_v6,
             latency=round(latency / measures_count, 8), 
             hops=round(hops / measures_count, 8),
             count=measures_count
@@ -135,7 +135,7 @@ if __name__ == '__main__':
 
     if measures is not None and len(measures.root) > 0:
         with open("measurements.json", "w") as f:
-            f.write(measures.model_dump_json()) # type: ignore
+            f.write(measures.model_dump_json())
 
         print("Saving measurements... Done!")
 

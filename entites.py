@@ -23,9 +23,9 @@ class ServerIdentity(BaseModel):
       return hash((self.id, self.origin))
     
 class Servers(RootModel):
-    root: set[ServerIdentity] = set()
+    root: list[ServerIdentity] = []
 
-    def add(self, object): self.root.add(object)
+    def add(self, object): self.root.append(object)
     def __len__(self): return len(self.root)
 
 class Measure(BaseModel):
