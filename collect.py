@@ -1,4 +1,3 @@
-import json
 import os
 from ripe.atlas.cousteau import AnchorRequest
 import pycountry
@@ -88,14 +87,13 @@ def get_latency_tcp(destination: str) -> float | None:
     else:
         return 0
 
-def run_measurements(server_identity: ServerIdentity, max_measures = 2, max_anchors = 10):
+def run_measurements(server_identity: ServerIdentity, max_measures = 3):
     destination = server_identity.ip_v4
     if destination is None:
         destination = server_identity.ip_v6
     if destination is None:
         return
 
-    print(f"Taking measurements for {destination} in {server_identity.country}.")
     latency = 0
     hops = 0
 
@@ -103,7 +101,7 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 2, max_anch
     failed_attempts = 0
     while(not (measures_count > max_measures or failed_attempts > max_measures)):
         single_latency = get_latency_tcp(destination)
-        result, _ = traceroute(target=destination, verbose=False, dport=53) # is not supposed to answer on 53
+        result, _ = traceroute(target=destination, verbose=False, dport=53, timeout=5) # is not supposed to answer on 53
 
         if single_latency is not None:
             latency += single_latency
@@ -120,9 +118,11 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 2, max_anch
             ip_v4=server_identity.ip_v4,
             ip_v6=server_identity.ip_v6,
             latency=round(latency / measures_count, 8), 
-            hops=round(hops / measures_count, 8),
+            hops=round(hops / measures_count),
             count=measures_count
         )
+
+        print(f"{measure.origin}:{destination} from {measure.ground_truth} replied in avg {measure.latency}ms in {measure.hops} hops.")
 
         return measure
 
