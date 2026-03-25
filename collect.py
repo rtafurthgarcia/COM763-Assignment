@@ -133,9 +133,9 @@ if __name__ == '__main__':
     servers = read_server_source()
 
     i = 0
+    print(f"Starting measurements on {len(servers)} servers.")
     with Pool(16) as pool, tqdm(total=len(servers)) as pbar, open("output.csv", "a") as csv:
         output = []
-        print(f"Starting measurements on {len(servers)} servers.")
         writer = BasemodelCSVWriter(csv, output, Measure) # would be too costly otherwise
         for measure in pool.imap(run_measurements, servers.root):
             if measure is None:
