@@ -5,7 +5,6 @@ from typing import Iterator, Optional, Self
 
 from pydantic import BaseModel, RootModel
 
-
 class ServerIdentity(BaseModel):
     id: int
     country: str
@@ -39,21 +38,3 @@ class Measure(BaseModel):
     hops: float
     count: int
     date_time: datetime.datetime = datetime.datetime.now()
-
-class Measures(RootModel):
-    root: list[Measure] = []
-
-    def __iter__(self) -> Iterator[Measure]: # type: ignore
-        return iter(self.root)
-
-    def __getitem__(self, item):
-        return self.root[item]
-    
-    def __add__(self, other: Self | list):
-        if isinstance(other, Measures):
-            return Measures(root=self.root + other.root)
-        elif isinstance(other, list):
-            return Measures(root=self.root + list(chain.from_iterable(other)))
-    
-    def append(self, measure: Measure):
-        self.root.append(measure)

@@ -5,7 +5,10 @@ from scapy.all import sr1
 from scapy.layers.inet import IP, TCP, traceroute
 import time
 from multiprocessing import Pool
-from entites import Measure, Measures, ServerIdentity, Servers
+from pydantic_csv import BasemodelCSVReader, BasemodelCSVWriter
+
+from tqdm import tqdm
+from entites import Measure, ServerIdentity, Servers
 import requests
 
 def obtain_ripe_anchors():
@@ -122,20 +125,24 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
             count=measures_count
         )
 
-        print(f"{measure.origin}:{destination} from {measure.ground_truth} replied in avg {measure.latency}ms in {measure.hops} hops.")
+        #print(f"{measure.origin}:{destination} from {measure.ground_truth} replied in avg {measure.latency}ms in {measure.hops} hops.")
 
         return measure
 
 if __name__ == '__main__':
     servers = read_server_source()
-    measures = Measures()
 
-    with Pool(4) as pool:
-        measures += pool.map(run_measurements, servers.root)
-
-    if measures is not None and len(measures.root) > 0:
-        with open("measurements.json", "w") as f:
-            f.write(measures.model_dump_json())
-
-        print("Saving measurements... Done!")
-
+    i = 0
+    with Pool(16) as pool, tqdm(total=len(servers)) as pbar, open("output.csv", "a") as csv:
+        output = []
+        print(f"Starting measurements on {len(servers)} servers.")
+        writer = BasemodelCSVWriter(csv, output, Measure) # would be too costly otherwise
+        for measure in pool.imap(run_measurements, servers.root):
+            if measure is None:
+                continue
+            
+            output.append(measure) # and we want to write in real-time
+            writer.write(skip_header=i != 0)
+            output.clear() # to avoid duplicates
+            i += 1
+            pbar.update()
