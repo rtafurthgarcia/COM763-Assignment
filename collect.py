@@ -1,11 +1,14 @@
 import os
+from pathlib import Path
 from ripe.atlas.cousteau import AnchorRequest
 import pycountry
 from scapy.all import sr1
 from scapy.layers.inet import IP, TCP, traceroute
 import time
 from multiprocessing import Pool
-from pydantic_csv import BasemodelCSVReader, BasemodelCSVWriter
+from pydantic_csv import BasemodelCSVWriter
+import argparse
+import signal
 
 from tqdm import tqdm
 from entites import Measure, ServerIdentity, Servers
@@ -57,12 +60,12 @@ def obtain_nordvpn_vpns():
             )
                 
 
-def read_server_source() -> Servers:
+def read_server_source(force: bool) -> Servers:
     results = Servers()
 
     print("Obtaining anchors...")
     # Read from file and parse JSON
-    if os.path.exists("sources.json"):
+    if os.path.exists("sources.json") and not force:
         with open("sources.json", "r") as file:
             results = Servers.model_validate_json(file.read())
     else:
@@ -128,21 +131,53 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
         #print(f"{measure.origin}:{destination} from {measure.ground_truth} replied in avg {measure.latency}ms in {measure.hops} hops.")
 
         return measure
+    
+def remove_blank_lines(file):
+    file = Path(file)
+    lines = file.read_text().splitlines()
+    filtered = [
+        line
+        for line in lines
+        if line.strip()
+    ]
+    file.write_text('\n'.join(filtered))
 
 if __name__ == '__main__':
-    servers = read_server_source()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output", help="Results output file", type=str)
+    parser.add_argument("-p", "--pool", help="Number of parallel requests that will be run. Default is 16.", type=int, default=16)
+    parser.add_argument("-f", "--force", help="Force reobtaining all anchors from RIPE.", action="store_true", default=False)
+    parser.add_argument("-c", "--clear", help="Clear the output file from empty lines (sometimes happens idk why)", action="store_true", default=False)
+    args = parser.parse_args()
+
+    force = args.force
+    pool = args.pool
+    output_file = args.output
+    clear = args.clear
+
+    if clear:
+        remove_blank_lines(output_file)
+        exit(0)
+
+    servers = read_server_source(force)
 
     i = 0
-    print(f"Starting measurements on {len(servers)} servers.")
-    with Pool(16) as pool, tqdm(total=len(servers)) as pbar, open("output.csv", "a") as csv:
+    print(f"Starting measurements on {len(servers)} servers, {pool} threads.")
+    with Pool(pool, initializer=signal.signal, initargs=(signal.SIGINT, signal.SIG_IGN)) as pool, tqdm(total=len(servers)) as pbar, open(output_file, "a") as csv:
         output = []
         writer = BasemodelCSVWriter(csv, output, Measure) # would be too costly otherwise
-        for measure in pool.imap(run_measurements, servers.root):
-            if measure is None:
-                continue
-            
-            output.append(measure) # and we want to write in real-time
-            writer.write(skip_header=i != 0)
-            output.clear() # to avoid duplicates
-            i += 1
-            pbar.update()
+        try:
+            for measure in pool.imap(run_measurements, servers.root):
+                if measure is None:
+                    continue
+                
+                output.append(measure) # and we want to write in real-time
+                writer.write(skip_header=i != 0)
+                output.clear() # to avoid duplicates
+                i += 1
+                pbar.update()
+        except KeyboardInterrupt:
+            print('Measurement interrupted by user. Results may or may not have been saved.')
+    
+
+        

@@ -1,7 +1,6 @@
 
 import datetime
-from itertools import chain
-from typing import Iterator, Optional, Self
+from typing import Optional
 
 from pydantic import BaseModel, RootModel
 
