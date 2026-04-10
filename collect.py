@@ -4,7 +4,7 @@ from ripe.atlas.cousteau import AnchorRequest
 import pycountry
 from scapy.all import sr1
 from scapy.layers.inet import IP, TCP, traceroute
-import time
+import datetime
 from multiprocessing import Pool
 from pydantic_csv import BasemodelCSVWriter
 import argparse
@@ -86,12 +86,15 @@ def read_server_source(force: bool) -> Servers:
     return results
 
 def get_latency_tcp(destination: str) -> float | None:
+    """
+    Return the latency in MILISECONDS
+    """
+    start = datetime.datetime.now()
     packet=sr1(IP(dst=destination) / TCP(dport=80, flags="S"), timeout=10, verbose=False)
-    start = time.time()
     if not (packet is None):
-        return time.time() - start
+        return (datetime.datetime.now() - start).microseconds / 1000 # from microseconds to miliseconds
     else:
-        return 0
+        return None
 
 def run_measurements(server_identity: ServerIdentity, max_measures = 3):
     destination = server_identity.ip_v4
@@ -102,9 +105,9 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
 
     latency = 0
     hops = 0
-
     measures_count = 0
     failed_attempts = 0
+
     while(not (measures_count > max_measures or failed_attempts > max_measures)):
         single_latency = get_latency_tcp(destination)
         result, _ = traceroute(target=destination, verbose=False, dport=53, timeout=5) # is not supposed to answer on 53
@@ -124,11 +127,9 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
             ip_v4=server_identity.ip_v4,
             ip_v6=server_identity.ip_v6,
             latency=round(latency / measures_count, 8), 
-            hops=round(hops / measures_count),
+            hops=round(hops / measures_count, 8),
             count=measures_count
         )
-
-        #print(f"{measure.origin}:{destination} from {measure.ground_truth} replied in avg {measure.latency}ms in {measure.hops} hops.")
 
         return measure
     
