@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from ripe.atlas.cousteau import AnchorRequest
+from ripe.atlas.cousteau import AnchorRequest, ProbeRequest
 import pycountry
 from scapy.all import sr1
 from scapy.layers.inet import IP, TCP, traceroute
@@ -14,19 +14,31 @@ from tqdm import tqdm
 from entites import Measure, ServerIdentity, Servers
 import requests
 
-def obtain_ripe_anchors():
+def obtain_ripe_servers():
     for country in pycountry.countries:
         print(f"Querying anchors for {country.name}.")
         anchors = AnchorRequest(**{"country": country.alpha_2, "limit": 10})
 
         for anchor in anchors:
-            if not anchor["is_disabled"]:
+            if anchor["is_disabled"] is False:
                 yield ServerIdentity(
                     id=anchor["id"],
                     country=country.alpha_2,
                     origin="RIPE",
                     ip_v4=anchor["ip_v4"],
                     ip_v6=anchor["ip_v6"]
+                )
+
+        probes = ProbeRequest(**{"country_code": country.alpha_2, "limit": 10})
+
+        for probe in probes:
+            if probe["is_public"] is True and probe["is_anchor"] is True:
+                yield ServerIdentity(
+                    id=probe["id"],
+                    country=country.alpha_2,
+                    origin="RIPE",
+                    ip_v4=probe["address_v4"],
+                    ip_v6=probe["address_v6"]
                 )
 
 def obtain_mullvad_vpns():
@@ -69,7 +81,7 @@ def read_server_source(force: bool) -> Servers:
         with open("sources.json", "r") as file:
             results = Servers.model_validate_json(file.read())
     else:
-        for anchor in obtain_ripe_anchors():
+        for anchor in obtain_ripe_servers():
             results.add(anchor)
 
         for server in obtain_mullvad_vpns():
@@ -108,16 +120,19 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
     measures_count = 0
     failed_attempts = 0
 
-    while(not (measures_count > max_measures or failed_attempts > max_measures)):
-        single_latency = get_latency_tcp(destination)
-        result, _ = traceroute(target=destination, verbose=False, dport=53, timeout=5) # is not supposed to answer on 53
+    try:
+        while(not (measures_count > max_measures or failed_attempts > max_measures)):
+            single_latency = get_latency_tcp(destination)
+            result, _ = traceroute(target=destination, verbose=False, dport=53, timeout=5) # is not supposed to answer on 53
 
-        if single_latency is not None:
-            latency += single_latency
-            hops += len(result)
-            measures_count += 1
-        else:
-            failed_attempts += 1
+            if single_latency is not None:
+                latency += single_latency
+                hops += len(result)
+                measures_count += 1
+            else:
+                failed_attempts += 1
+    except:
+        return None
 
     if (measures_count > 0):
         measure = Measure(
