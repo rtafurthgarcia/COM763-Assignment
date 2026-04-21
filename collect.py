@@ -32,7 +32,7 @@ def obtain_ripe_servers():
         probes = ProbeRequest(**{"country_code": country.alpha_2, "limit": 10})
 
         for probe in probes:
-            if probe["is_public"] is True and probe["is_anchor"] is True:
+            if probe["is_public"] is True and probe["is_anchor"] is False:
                 yield ServerIdentity(
                     id=probe["id"],
                     country=country.alpha_2,
