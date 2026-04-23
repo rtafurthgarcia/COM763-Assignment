@@ -11,7 +11,7 @@ import argparse
 import signal
 
 from tqdm import tqdm
-from entites import Measure, ServerIdentity, Servers
+from shared import Measure, ServerIdentity, Servers
 import requests
 
 def obtain_ripe_servers():
@@ -136,9 +136,9 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
 
     if (measures_count > 0):
         measure = Measure(
-            id=server_identity.id, 
-            ground_truth=server_identity.country,
-            origin=server_identity.origin,
+            id=server_identity.id,  # type: ignore
+            ground_truth=server_identity.country, # type: ignore
+            origin=server_identity.origin, # type: ignore
             ip_v4=server_identity.ip_v4,
             ip_v6=server_identity.ip_v6,
             latency=round(latency / measures_count, 8), 
@@ -147,6 +147,33 @@ def run_measurements(server_identity: ServerIdentity, max_measures = 3):
         )
 
         return measure
+    
+
+def run_measurement(server_ip: str, port: int, max_measures: int = 3):
+    latency = 0
+    hops = 0
+    measures_count = 0
+    failed_attempts = 0
+
+    try:
+        while(not (measures_count > max_measures or failed_attempts > max_measures)):
+            single_latency = get_latency_tcp(server_ip)
+            result, _ = traceroute(target=server_ip, verbose=False, dport=port, timeout=5) # is not supposed to answer on 53
+
+            if single_latency is not None:
+                latency += single_latency
+                hops += len(result)
+                measures_count += 1
+            else:
+                failed_attempts += 1
+    except:
+        return None
+
+    if (measures_count > 0):
+        return (round(latency / measures_count, 8), round(hops / measures_count, 8))
+    else:
+        return None
+        
     
 def remove_blank_lines(file):
     file = Path(file)

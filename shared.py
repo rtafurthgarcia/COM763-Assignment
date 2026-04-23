@@ -5,12 +5,12 @@ from typing import Counter, Optional
 from matplotlib import pyplot as plt
 import numpy as np
 from pydantic import BaseModel, RootModel
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix, f1_score, precision_recall_fscore_support
+from sklearn.metrics import f1_score, precision_recall_fscore_support
 
 class ServerIdentity(BaseModel):
-    id: int
-    country: str
-    origin: str
+    id: Optional[int] = None
+    country: Optional[str] = None
+    origin: Optional[str] = None
     ip_v4: Optional[str] = None
     ip_v6: Optional[str] = None
 
